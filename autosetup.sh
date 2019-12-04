@@ -137,34 +137,34 @@ if [ "$NO_PACKAGES" -eq 0 ]; then
 	source "$PATHROOT/autosetup/packages/bash.inc"
 
 	# build a sane version of coreutils
-	source "$PATHROOT/autosetup/packages/coreutils.inc"
+	#source "$PATHROOT/autosetup/packages/coreutils.inc"
 
 	# build binutils to ensure we have gold
-	source "$PATHROOT/autosetup/packages/binutils-gold.inc"
+	#source "$PATHROOT/autosetup/packages/binutils-gold.inc"
 
 	# build make
-	source "$PATHROOT/autosetup/packages/make.inc"
+	#source "$PATHROOT/autosetup/packages/make.inc"
 
 	# build m4
-	source "$PATHROOT/autosetup/packages/m4.inc"
+	#source "$PATHROOT/autosetup/packages/m4.inc"
 
 	# build autoconf
-	source "$PATHROOT/autosetup/packages/autoconf.inc"
+	#source "$PATHROOT/autosetup/packages/autoconf.inc"
 
 	# build automake
-	source "$PATHROOT/autosetup/packages/automake.inc"
+	#source "$PATHROOT/autosetup/packages/automake.inc"
 
 	# build libtool
-	source "$PATHROOT/autosetup/packages/libtool.inc"
+	#source "$PATHROOT/autosetup/packages/libtool.inc"
 
 	# build cmake, needed to build LLVM
-	source "$PATHROOT/autosetup/packages/cmake.inc"
+	#source "$PATHROOT/autosetup/packages/cmake.inc"
 
 	# gperftools requires libunwind
-	source "$PATHROOT/autosetup/packages/libunwind.inc"
+	#source "$PATHROOT/autosetup/packages/libunwind.inc"
 
 	# we need a patched LLVM
-	source "$PATHROOT/autosetup/packages/llvm.inc"
+	#source "$PATHROOT/autosetup/packages/llvm.inc"
 fi
 
 # Build baseline version of gperftools

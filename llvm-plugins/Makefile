@@ -1,10 +1,12 @@
-CC=g++
+CC=clang-10
 INCLUDES=-I. -I../staticlib -I../metapagetable
-CFLAGS=-c -Werror -Wall -std=c++0x -g `llvm-config --cxxflags` -O0
-LDFLAGS=-g -shared
+LLVMFLAGS=-I/usr/lib/llvm-10/include  -D_GNU_SOURCE -D__STDC_CONSTANT_MACROS -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -fPIC
+CFLAGS=-c -Wall -std=c++14 -g $(LLVMFLAGS) -O0 
+LDFLAGS=-g -shared -L/usr/lib/llvm-10/lib -lLLVM -lstdc++ -Wl,-znodelete
 TARGETDIR=.
 OBJDIR=$(TARGETDIR)/obj
-GOLDINSTDIR=$(METALLOC_HOME)/autosetup.dir/install/common
+#GOLDINSTDIR=$(METALLOC_HOME)/autosetup.dir/install/common
+GOLDINSTDIR=/usr/lib/llvm-10
 LINKWITHGOLDFLAGS=-Wl,--no-undefined -L $(GOLDINSTDIR)/lib/ -l:LLVMgold.so -Wl,--rpath=$(GOLDINSTDIR)/lib
 
 EXE=$(TARGETDIR)/libplugins.so
@@ -22,10 +24,10 @@ clean:
 	rm $(EXE)
 	rm $(EXE2)
 
-$(EXE): $(OBJS) $(TARGETDIR)
+$(EXE): $(OBJS)
 	$(CC) $(OBJS) $(LDFLAGS) $(LINKWITHGOLDFLAGS) -o $@
 
-$(EXE2): $(OBJS) $(TARGETDIR)
+$(EXE2): $(OBJS)
 	$(CC) $(OBJS) $(LDFLAGS) -o $@
 
 -include $(DEPS)
@@ -35,7 +37,4 @@ $(OBJDIR)/%.o: %.cpp $(OBJDIR)
 
 $(OBJDIR):
 	mkdir -p $(OBJDIR)
-
-$(TARGETDIR):
-	mkdir -p $(TARGETDIR)
 

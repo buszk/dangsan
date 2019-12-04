@@ -22,8 +22,12 @@
 #include "llvm/Analysis/GlobalsModRef.h"
 #include "llvm/ADT/Statistic.h"
 
-#include <string>
+#include <llvm/IR/LegacyPassManager.h>
+#include <llvm/Transforms/IPO/PassManagerBuilder.h>
+
 #include <metadata.h>
+#include <set>
+#include <string>
 
 #ifdef DANG_DEBUG
 #define DEBUG_MSG(err) 	err
@@ -38,8 +42,8 @@ STATISTIC(DangRegisterPtrCallDot, "Number of store instructions instrumented for
 
 struct PointerTracker : public FunctionPass {
 	static char 		ID;
-	
-	MemoryDependenceAnalysis *MD;
+
+        MemoryDependenceResults *MD;
         AliasAnalysis            *AA;
 
         
@@ -65,132 +69,143 @@ struct PointerTracker : public FunctionPass {
 		return true;
 	}
 
-	virtual bool runOnFunction(Function &F) {
-		if (ISMETADATAFUNC(F.getName().str().c_str())) {
-			return false;
-		}
-		if (!shouldProcessFunction(F.getName().str().c_str())) {
-			return false;
-		}
-		MD = &getAnalysis<MemoryDependenceAnalysis>();
-                AA = &getAnalysis<AAResultsWrapperPass>().getAAResults();
+        virtual bool runOnFunction(Function &F) override {
+          if (ISMETADATAFUNC(F.getName().str().c_str())) {
+            return false;
+          }
+          if (!shouldProcessFunction(F.getName().str().c_str())) {
+            return false;
+          }
+          MD = &getAnalysis<MemoryDependenceWrapperPass>().getMemDep();
 
-		dbgs() << "runOnFunction " << F.getName().str().c_str() << "\n";
-		DEBUG_MSG(errs() << "Function : " << F.getName().str().c_str() << "\n");
-		std::string name = F.getName().str();
-                if (is_dot_func(name.c_str())) {
-                    dot_func = true;
-                } else {
-                    dot_func = false;
-                }
-                print_debug = 0;
+          AA = &getAnalysis<AAResultsWrapperPass>().getAAResults();
 
-                /* Following code is added to debug particular function.
-                 *
-                 if (strstr(F.getName().str().c_str(), "Compute_Cone_Data") != NULL) {
-                    errs() << "Function : " << F.getName().str().c_str() << "\n";
-                    print_debug = 1;
-                }
-                 */
+          dbgs() << "runOnFunction " << F.getName().str().c_str() << "\n";
+          DEBUG_MSG(errs() << "Function : " << F.getName().str().c_str()
+                           << "\n");
+          std::string name = F.getName().str();
+          if (is_dot_func(name.c_str())) {
+            dot_func = true;
+          } else {
+            dot_func = false;
+          }
+          print_debug = 0;
 
-                /* This is one way to skip stack objects. 
-                 * Collect all store instructions having stack pointer operand
-                 * std::set<const Instruction*> stackStores;
-                for (auto &bb : F) {
-                    for (auto &i : bb) {
-                        AllocaInst *AI = dyn_cast<AllocaInst>(&i);
-                        if (!AI)
-                            continue;
-                        AccumulateStackStores(AI, stackStores);
-                    }
-                }
-                 */
-	
-		/* Iterate over function instructions */
-		for (inst_iterator I = inst_begin(F),  E = inst_end(F); I != E; ++I) {
-			Instruction *Inst = &(*I);
-			DEBUG_MSG(Inst->dump());
+          /* Following code is added to debug particular function.
+           *
+           if (strstr(F.getName().str().c_str(), "Compute_Cone_Data") != NULL) {
+              errs() << "Function : " << F.getName().str().c_str() << "\n";
+              print_debug = 1;
+          }
+           */
+
+          /* This is one way to skip stack objects.
+           * Collect all store instructions having stack pointer operand
+           * std::set<const Instruction*> stackStores;
+          for (auto &bb : F) {
+              for (auto &i : bb) {
+                  AllocaInst *AI = dyn_cast<AllocaInst>(&i);
+                  if (!AI)
+                      continue;
+                  AccumulateStackStores(AI, stackStores);
+              }
+          }
+           */
+
+          /* Iterate over function instructions */
+          for (inst_iterator I = inst_begin(F), E = inst_end(F); I != E; ++I) {
+            Instruction *Inst = &(*I);
+            DEBUG_MSG(Inst->dump());
+            /*
                         if (print_debug == 1) {
                             Inst->dump();
                         }
+            */
 
-			/*
- 			 * Here, we need not to have to track allocation calls (e.g. malloc)
- 			 * Even if return value is saved in local(stack) memory.
- 			 * Because, store instruction will be used to store value to
- 			 * Heap/Global location.
- 			 */
-			if (StoreInst *Store = dyn_cast<StoreInst>(Inst)) {
-				if (isUninstrumented(Store)) {
-					DEBUG_MSG(errs() << "Uninstrumented store\n");
-					continue;
-				}
+            /*
+             * Here, we need not to have to track allocation calls (e.g. malloc)
+             * Even if return value is saved in local(stack) memory.
+             * Because, store instruction will be used to store value to
+             * Heap/Global location.
+             */
+            if (StoreInst *Store = dyn_cast<StoreInst>(Inst)) {
+              if (isUninstrumented(Store)) {
+                DEBUG_MSG(errs() << "Uninstrumented store\n");
+                continue;
+              }
 
-				Value *ptr_addr = Store->getPointerOperand();
-				Value *object_addr = Store->getValueOperand();
-				Type *Ty = object_addr->getType();
-			        
-				/* Check whether rsh is pointer.
-                                 * If stack pointers are to be skipped, comment out isStackPointer.
-                                 */
-				if (!isPointerOperand(object_addr)) { //|| isStackPointer(ptr_addr)) {
-					DEBUG_MSG(errs() << "RHS Not a pointer type OR LHS Stack pointer \n");
-					continue;
-				}
+              Value *ptr_addr = Store->getPointerOperand();
+              Value *object_addr = Store->getValueOperand();
+              Type *Ty = object_addr->getType();
 
-                                /* Comment out this condition, if stack objects has to be tracked.
-                                 */                               
-                                if (isStackPointer(object_addr)) {
-                                    DEBUG_MSG(errs() << "Stack value object \n");
-                                    continue;
-                                }
+              /* Check whether rsh is pointer.
+               * If stack pointers are to be skipped, comment out
+               * isStackPointer.
+               */
+              if (!isPointerOperand(
+                      object_addr)) { //|| isStackPointer(ptr_addr)) {
+                DEBUG_MSG(errs()
+                          << "RHS Not a pointer type OR LHS Stack pointer \n");
+                continue;
+              }
 
-                                /*
-                                if (stackStores.count(Store)) {
-                                    DEBUG_MSG(errs() << "Stack store instruction \n");
-                                    continue;
-                                }
-                                */
-                             
- 				/* Check whether pointer is a function pointer. */
-				PointerType *ValueType = dyn_cast_or_null<PointerType>(Ty);
-				if (ValueType && isa<FunctionType>(ValueType->getElementType())) {
-					DEBUG_MSG(errs() << "Store : Function pointer type \n");
-					continue;
-				}
-                                
-                                /* Check whether value operand is a global variable */
-                                if (isGlobalPointer(object_addr)) {
-                                    DEBUG_MSG(errs() << "Global Variable : Value operand \n");
-                                    continue;
-                                }
-				
-				/* Check whether pointer is updated just with memory object arithmatic */
-				if (isSameLoadStore(ptr_addr, object_addr)) {
-					DEBUG_MSG(errs() << "Store : Pointer update with same object \n");
-					continue;
-				}
-                                
-                                /* Check for constant null pointer */
-                                if (isa<ConstantPointerNull>(object_addr)) {
-                                        DEBUG_MSG(errs() << "Store : Object pointer with constant null value \n");
-                                        continue;
-                                }
-				
-				/* Get next instruction after store */
-				Instruction *insertBeforeInstruction = Inst;
-				BasicBlock::iterator nextIt(Inst);
-				insertBeforeInstruction = &*nextIt;
-				IRBuilder<> B(insertBeforeInstruction);
-				instrumentStore(F.getParent(), F, ptr_addr, object_addr, B);
-			}
-		}
-		return true; /* Transforms code */
-	}
-	
-	void getAnalysisUsage(AnalysisUsage &AU) const override {
+              /* Comment out this condition, if stack objects has to be tracked.
+               */
+              if (isStackPointer(object_addr)) {
+                DEBUG_MSG(errs() << "Stack value object \n");
+                continue;
+              }
+
+              /*
+              if (stackStores.count(Store)) {
+                  DEBUG_MSG(errs() << "Stack store instruction \n");
+                  continue;
+              }
+              */
+
+              /* Check whether pointer is a function pointer. */
+              PointerType *ValueType = dyn_cast_or_null<PointerType>(Ty);
+              if (ValueType && isa<FunctionType>(ValueType->getElementType())) {
+                DEBUG_MSG(errs() << "Store : Function pointer type \n");
+                continue;
+              }
+
+              /* Check whether value operand is a global variable */
+              if (isGlobalPointer(object_addr)) {
+                DEBUG_MSG(errs() << "Global Variable : Value operand \n");
+                continue;
+              }
+
+              /* Check whether pointer is updated just with memory object
+               * arithmatic */
+              if (isSameLoadStore(ptr_addr, object_addr)) {
+                DEBUG_MSG(errs()
+                          << "Store : Pointer update with same object \n");
+                continue;
+              }
+
+              /* Check for constant null pointer */
+              if (isa<ConstantPointerNull>(object_addr)) {
+                DEBUG_MSG(
+                    errs()
+                    << "Store : Object pointer with constant null value \n");
+                continue;
+              }
+
+              /* Get next instruction after store */
+              Instruction *insertBeforeInstruction = Inst;
+              BasicBlock::iterator nextIt(Inst);
+              insertBeforeInstruction = &*nextIt;
+              IRBuilder<> B(insertBeforeInstruction);
+              instrumentStore(F.getParent(), F, ptr_addr, object_addr, B);
+            }
+          }
+          return true; /* Transforms code */
+        }
+
+        void getAnalysisUsage(AnalysisUsage &AU) const override {
                 AU.addRequired<AAResultsWrapperPass>();
-                AU.addRequired<MemoryDependenceAnalysis>();
+                AU.addRequired<MemoryDependenceWrapperPass>();
                 AU.addPreserved<AAResultsWrapperPass>();
 	}
 
@@ -250,7 +265,8 @@ private:
 	bool instrumentStore(Module *M, Function &F, Value *ptr_addr, Value *obj_addr, IRBuilder<> &B) {
                 if (isa<ConstantPointerNull>(obj_addr)) {
                     DEBUG_MSG(errs() << "Value is constant expression \n");
-                    obj_addr->dump();
+
+                    DEBUG_MSG(obj_addr->dump());
                 }
 
 		Type *objTy = obj_addr->getType();
@@ -270,13 +286,17 @@ private:
  			 */
 			Value *obj_bound_addr;
 			Type *VoidTy = Type::getVoidTy(M->getContext());
-			IntegerType *IntPtrTy = M->getDataLayout().getIntPtrType(M->getContext(), 0);
-			std::string functionName = "inlinedang_registerptr";
-			Constant *RegisterPtrFunc = M->getOrInsertFunction(
-				functionName, VoidTy, IntPtrTy,
-				IntPtrTy, NULL);
+                        Type *IntPtrTy =
+                            Type::getIntNPtrTy(M->getContext(), 64);
+                        // IntegerType *IntPtrTy =
+                        // M->getDataLayout().getIntPtrType(M->getContext(), 0);
+                        std::string functionName = "inlinedang_registerptr";
+                        M->getOrInsertFunction(functionName, VoidTy, IntPtrTy,
+                                               IntPtrTy);
+                        Constant *RegisterPtrFunc =
+                            M->getFunction(functionName);
 
-			if (!(objTy->getScalarType()->isPointerTy() || 
+                        if (!(objTy->getScalarType()->isPointerTy() || 
 					objTy->getScalarType()->isIntegerTy())) {
 				DEBUG_MSG(errs() << "Not a correct type \n");
 				obj_bound_addr = B.CreateBitCast(obj_addr, B.getInt64Ty());
@@ -444,3 +464,14 @@ char PointerTracker::ID = 0;
 static RegisterPass<PointerTracker> X("pointertracker", "Pointer Tracker Pass",
 					true,
 					false);
+
+static void registerPointerTracker(const PassManagerBuilder &,
+                                   legacy::PassManagerBase &PM) {
+  PM.add(new PointerTracker());
+}
+static RegisterStandardPasses
+    RegisterPointerTracker(PassManagerBuilder::EP_OptimizerLast,
+                           registerPointerTracker);
+static RegisterStandardPasses
+    RegisterPointerTracker0(PassManagerBuilder::EP_EnabledOnOptLevel0,
+                            registerPointerTracker);

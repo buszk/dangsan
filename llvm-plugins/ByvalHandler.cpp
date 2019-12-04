@@ -5,22 +5,25 @@
  *      Author: haller
  */
 
-#include <llvm/Pass.h>
-#include <llvm/IR/Module.h>
+#include <llvm/CodeGen/TargetLowering.h>
+#include <llvm/CodeGen/TargetSubtargetInfo.h>
+#include <llvm/IR/Constant.h>
+#include <llvm/IR/Constants.h>
 #include <llvm/IR/Function.h>
+#include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Instruction.h>
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/IntrinsicInst.h>
 #include <llvm/IR/Intrinsics.h>
-#include <llvm/IR/Constant.h>
-#include <llvm/IR/Constants.h>
-#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/Module.h>
+#include <llvm/Pass.h>
 #include <llvm/Support/CommandLine.h>
 #include <llvm/Support/raw_ostream.h>
-#include <llvm/Target/TargetLowering.h>
-#include <llvm/Target/TargetSubtargetInfo.h>
 #include <llvm/Transforms/Utils/Local.h>
 #include <llvm/Transforms/Utils/ModuleUtils.h>
+
+#include <llvm/IR/LegacyPassManager.h>
+#include <llvm/Transforms/IPO/PassManagerBuilder.h>
 
 #include <string>
 #include <list>
@@ -59,18 +62,19 @@ struct ByvalHandler : public FunctionPass {
             Argument *Arg = dyn_cast<Argument>(&a);
             unsigned long Size = SM->GetByvalArgumentSize(Arg);
             if (Arg->hasByValAttr() && !SM->IsSafeStackAlloca(Arg, Size)) {
-                IRBuilder<> B(F.getEntryBlock().getFirstInsertionPt());
-                Value *NewAlloca = B.CreateAlloca(Arg->getType()->getPointerElementType());
-                Arg->replaceAllUsesWith(NewAlloca);
-                Value *Src = B.CreatePointerCast(Arg, PtrVoidTy);
-                Value *Dst = B.CreatePointerCast(NewAlloca, PtrVoidTy);
-                std::vector<Value *> callParams;
-                callParams.push_back(Dst);
-                callParams.push_back(Src);
-                callParams.push_back(ConstantInt::get(IntPtrTy, Size));
-                callParams.push_back(ConstantInt::get(Int32Ty, 1));
-                callParams.push_back(ConstantInt::get(Int1Ty, 0));
-                B.CreateCall(MemcpyFunc, callParams);
+              IRBuilder<> B(F.getEntryBlock().getFirstNonPHI());
+              Value *NewAlloca =
+                  B.CreateAlloca(Arg->getType()->getPointerElementType());
+              Arg->replaceAllUsesWith(NewAlloca);
+              Value *Src = B.CreatePointerCast(Arg, PtrVoidTy);
+              Value *Dst = B.CreatePointerCast(NewAlloca, PtrVoidTy);
+              std::vector<Value *> callParams;
+              callParams.push_back(Dst);
+              callParams.push_back(Src);
+              callParams.push_back(ConstantInt::get(IntPtrTy, Size));
+              callParams.push_back(ConstantInt::get(Int32Ty, 1));
+              callParams.push_back(ConstantInt::get(Int1Ty, 0));
+              B.CreateCall(MemcpyFunc, callParams);
             }
         }
 
@@ -111,7 +115,10 @@ struct ByvalHandler : public FunctionPass {
 
 char ByvalHandler::ID = 0;
 static RegisterPass<ByvalHandler> X("byvalhandler", "Byval Handler Pass", true, false);
-
-
-
-
+static void registerByvalHandler(const PassManagerBuilder &,
+                                 legacy::PassManagerBase &PM) {
+  PM.add(new ByvalHandler());
+}
+static RegisterStandardPasses
+    RegisterByvalHandler(PassManagerBuilder::EP_OptimizerLast,
+                         registerByvalHandler);

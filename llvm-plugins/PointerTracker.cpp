@@ -22,7 +22,11 @@
 #include "llvm/Analysis/GlobalsModRef.h"
 #include "llvm/ADT/Statistic.h"
 
+#include <llvm/IR/LegacyPassManager.h>
+#include <llvm/Transforms/IPO/PassManagerBuilder.h>
+
 #include <string>
+#include <set>
 #include <metadata.h>
 
 #ifdef DANG_DEBUG
@@ -39,7 +43,7 @@ STATISTIC(DangRegisterPtrCallDot, "Number of store instructions instrumented for
 struct PointerTracker : public FunctionPass {
 	static char 		ID;
 	
-	MemoryDependenceAnalysis *MD;
+	MemoryDependenceResults *MD;
         AliasAnalysis            *AA;
 
         
@@ -65,14 +69,15 @@ struct PointerTracker : public FunctionPass {
 		return true;
 	}
 
-	virtual bool runOnFunction(Function &F) {
+	virtual bool runOnFunction(Function &F) override {
 		if (ISMETADATAFUNC(F.getName().str().c_str())) {
 			return false;
 		}
 		if (!shouldProcessFunction(F.getName().str().c_str())) {
 			return false;
 		}
-		MD = &getAnalysis<MemoryDependenceAnalysis>();
+		MD = &getAnalysis<MemoryDependenceWrapperPass>().getMemDep();
+
                 AA = &getAnalysis<AAResultsWrapperPass>().getAAResults();
 
 		dbgs() << "runOnFunction " << F.getName().str().c_str() << "\n";
@@ -110,9 +115,11 @@ struct PointerTracker : public FunctionPass {
 		for (inst_iterator I = inst_begin(F),  E = inst_end(F); I != E; ++I) {
 			Instruction *Inst = &(*I);
 			DEBUG_MSG(Inst->dump());
+            /*
                         if (print_debug == 1) {
                             Inst->dump();
                         }
+            */
 
 			/*
  			 * Here, we need not to have to track allocation calls (e.g. malloc)
@@ -190,7 +197,7 @@ struct PointerTracker : public FunctionPass {
 	
 	void getAnalysisUsage(AnalysisUsage &AU) const override {
                 AU.addRequired<AAResultsWrapperPass>();
-                AU.addRequired<MemoryDependenceAnalysis>();
+                AU.addRequired<MemoryDependenceWrapperPass>();
                 AU.addPreserved<AAResultsWrapperPass>();
 	}
 
@@ -250,7 +257,8 @@ private:
 	bool instrumentStore(Module *M, Function &F, Value *ptr_addr, Value *obj_addr, IRBuilder<> &B) {
                 if (isa<ConstantPointerNull>(obj_addr)) {
                     DEBUG_MSG(errs() << "Value is constant expression \n");
-                    obj_addr->dump();
+                    
+                    DEBUG_MSG(obj_addr->dump());
                 }
 
 		Type *objTy = obj_addr->getType();
@@ -270,11 +278,13 @@ private:
  			 */
 			Value *obj_bound_addr;
 			Type *VoidTy = Type::getVoidTy(M->getContext());
-			IntegerType *IntPtrTy = M->getDataLayout().getIntPtrType(M->getContext(), 0);
+            Type *IntPtrTy = Type::getIntNPtrTy(M->getContext(), 64);
+			//IntegerType *IntPtrTy = M->getDataLayout().getIntPtrType(M->getContext(), 0);
 			std::string functionName = "inlinedang_registerptr";
-			Constant *RegisterPtrFunc = M->getOrInsertFunction(
+            M->getOrInsertFunction(
 				functionName, VoidTy, IntPtrTy,
-				IntPtrTy, NULL);
+				IntPtrTy);
+			Constant *RegisterPtrFunc = M->getFunction(functionName);
 
 			if (!(objTy->getScalarType()->isPointerTy() || 
 					objTy->getScalarType()->isIntegerTy())) {
@@ -444,3 +454,10 @@ char PointerTracker::ID = 0;
 static RegisterPass<PointerTracker> X("pointertracker", "Pointer Tracker Pass",
 					true,
 					false);
+
+static void registerPointerTracker(const PassManagerBuilder &,
+        legacy::PassManagerBase &PM) {
+    PM.add(new PointerTracker());
+}
+static RegisterStandardPasses RegisterPointerTracker(PassManagerBuilder::EP_OptimizerLast, registerPointerTracker);
+static RegisterStandardPasses RegisterPointerTracker0(PassManagerBuilder::EP_EnabledOnOptLevel0, registerPointerTracker);

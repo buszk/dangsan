@@ -17,8 +17,8 @@
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/Support/CommandLine.h>
 #include <llvm/Support/raw_ostream.h>
-#include <llvm/Target/TargetLowering.h>
-#include <llvm/Target/TargetSubtargetInfo.h>
+#include <llvm/CodeGen/TargetLowering.h>
+#include <llvm/CodeGen/TargetSubtargetInfo.h>
 #include <llvm/Transforms/Utils/Local.h>
 #include <llvm/Transforms/Utils/ModuleUtils.h>
 #include <llvm/Analysis/ScalarEvolution.h>
@@ -30,14 +30,17 @@
 #include <set>
 #include <vector>
 
+#include <llvm/IR/LegacyPassManager.h>
+#include <llvm/Transforms/IPO/PassManagerBuilder.h>
+
 #include <Utils.h>
 #include <metadata.h>
 
 using namespace llvm;
 
 cl::opt<bool> MergedStack ("mergedstack", cl::desc("Merge the static stack allocas before generating metadata"), cl::init(false));
-extern cl::opt<bool> UseLargeStack;
-extern cl::opt<unsigned long> LargeStackThreshold;
+//extern cl::opt<bool> UseLargeStack;
+//extern cl::opt<unsigned long> LargeStackThreshold;
 
 template<class Cont>
 class const_reverse_wrapper {
@@ -117,7 +120,7 @@ struct StackTracker : public FunctionPass {
             unsigned align =
                 std::max((unsigned)DL->getPrefTypeAlignment(Ty), AI->getAlignment());
             // Add alignment.
-            staticOffset = RoundUpToAlignment(staticOffset, align);
+            staticOffset = alignTo(staticOffset, align);
             // Save start address
             offsetVector.push_back(staticOffset);
             // Compute and add size
@@ -128,7 +131,7 @@ struct StackTracker : public FunctionPass {
             staticOffset += size;
         }
         AllocaInst *newAI = AllocaBuilder.CreateAlloca(Int8Ty, ConstantInt::get(IntPtrTy, staticOffset));
-        newAI->setAlignment(maxAlignment);
+        newAI->setAlignment(MaybeAlign(maxAlignment));
         // Replace static objects with pointer into merged object.
         // Traverse in reverse alloca order.
         int offsetPos = 0;
@@ -158,9 +161,9 @@ struct StackTracker : public FunctionPass {
         }
     }
 
-    virtual bool runOnFunction(Function &F) {
+    virtual bool runOnFunction(Function &F) override {
         if (!initialized)
-            doInitialization(F.getParent());
+            doInitialization(*F.getParent());
 
         if (ISMETADATAFUNC(F.getName().str().c_str()))
             return false;
@@ -169,7 +172,7 @@ struct StackTracker : public FunctionPass {
         LoopInfo *LI = &getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
         DominatorTree *DT = &getAnalysis<DominatorTreeWrapperPass>().getDomTree();
 
-        IRBuilder<> AllocaBuilder(F.getEntryBlock().getFirstInsertionPt());
+        IRBuilder<> AllocaBuilder(F.getEntryBlock().getFirstNonPHI());
         std::vector<AllocaInst*> allocasToRemove;
         // Find all safe static allocas in the function
         // Move them to the top of the function
@@ -181,7 +184,7 @@ struct StackTracker : public FunctionPass {
             unsigned long Size = SM->GetStaticAllocaAllocationSize(AI);
             if (SM->IsSafeStackAlloca(AI, Size)) {
                 AllocaInst *newAI = AllocaBuilder.CreateAlloca(AI->getAllocatedType(), AI->getArraySize(), AI->getName());
-                newAI->setAlignment(AI->getAlignment());
+                newAI->setAlignment(MaybeAlign(AI->getAlignment()));
                 newAI->setUsedWithInAlloca(AI->isUsedWithInAlloca());
                 AI->replaceAllUsesWith(newAI);
                 allocasToRemove.push_back(AI);
@@ -206,7 +209,7 @@ struct StackTracker : public FunctionPass {
             // Just create new allocas at the top of the function if no merging requested
             for (auto &AI : oldStaticAllocas) {
                 AllocaInst *newAI = AllocaBuilder.CreateAlloca(AI->getAllocatedType(), AI->getArraySize(), AI->getName());
-                newAI->setAlignment(AI->getAlignment());
+                newAI->setAlignment(MaybeAlign(AI->getAlignment()));
                 newAI->setUsedWithInAlloca(AI->isUsedWithInAlloca());
                 AI->replaceAllUsesWith(newAI);
                 staticAllocas.insert(newAI);
@@ -242,13 +245,13 @@ struct StackTracker : public FunctionPass {
         }
 
         for (auto AI : interestingAllocas) {
-            unsigned long Size = SM->GetStaticAllocaAllocationSize(AI);
+            //unsigned long Size = SM->GetStaticAllocaAllocationSize(AI);
             // Create metadata if needed and insert it before the regular allocation
             // Performed here not to disturb the IRBuilder
             // metaData is scoped here to be accessible during initialization
             Value *metaData;
             if (DeepMetadata) {
-                metaData = new AllocaInst(MetaDataTy, nullptr, "MetaData_" + AI->getName(), AI);
+                metaData = new AllocaInst(MetaDataTy, 0, nullptr, "MetaData_" + AI->getName(), AI);
             }
             Instruction *insertBeforeInstruction;
             if (staticAllocas.count(AI) == 0) {
@@ -256,16 +259,19 @@ struct StackTracker : public FunctionPass {
                 ++nextIt;
                 if (nextIt != AI->getParent()->end())
                     insertBeforeInstruction = &*nextIt;
+                else
+                    continue;
             } else {
                 insertBeforeInstruction = GetInitPosition(AI, firstNonAlloca, LI, DT);
             }
             IRBuilder<> B(insertBeforeInstruction);
 
             if (AI->getAlignment() < (1 << STACKALIGN))
-                AI->setAlignment(1 << STACKALIGN);
+                AI->setAlignment(MaybeAlign(1 << STACKALIGN));
 
             // Check if this is a large static allocation or not
             // Move to large-stack if it is
+            /*
             if (UseLargeStack && staticAllocas.count(AI) != 0) {
                 if (Size >= LargeStackThreshold) {
                     if (AI->getAlignment() < (1 << STACKALIGN_LARGE)) {
@@ -273,6 +279,7 @@ struct StackTracker : public FunctionPass {
                     }
                 }
             }
+            */
 
             // Uses metaset
             if (DeepMetadata) {
@@ -290,8 +297,8 @@ struct StackTracker : public FunctionPass {
         return false;
     }
 
-    bool doInitialization(Module *Mod) {
-        M = Mod;
+    bool doInitialization(Module &Mod) override {
+        M = &Mod;
 
         DL = &(M->getDataLayout());
         if (!DL)
@@ -314,29 +321,33 @@ struct StackTracker : public FunctionPass {
         if (!FixedCompression) {
             //declare i64 @metaset_alignment(i64, i64, iM, i64)
             std::string functionName = "metaset_alignment_" + std::to_string(MetadataBytes);
-            MetasetFunc = M->getOrInsertFunction(functionName, IntPtrTy,
-                IntPtrTy, IntPtrTy, IntMetaTy, IntPtrTy, NULL);
+            M->getOrInsertFunction(functionName, IntPtrTy,
+                IntPtrTy, IntPtrTy, IntMetaTy, IntPtrTy);
+            MetasetFunc = M->getFunction(functionName);
             //declare i64 @metabaseget(i64)
             std::string functionName2 = "metabaseget";
-            MetabasegetFunc = M->getOrInsertFunction(functionName2, IntPtrTy, IntPtrTy, NULL);
+            M->getOrInsertFunction(functionName2, IntPtrTy, IntPtrTy);
+            MetabasegetFunc = M->getFunction(functionName2);
             //declare i64 @metaset_alignment(i64, i64, iM, i64)
             std::string functionName3 = "metaset_fast_" + std::to_string(MetadataBytes);
-            MetasetFastFunc = M->getOrInsertFunction(functionName3, IntPtrTy,
-                IntPtrTy, IntPtrTy, IntMetaTy, IntPtrTy, IntPtrTy, IntPtrTy, NULL);
+            M->getOrInsertFunction(functionName3, IntPtrTy,
+                IntPtrTy, IntPtrTy, IntMetaTy, IntPtrTy, IntPtrTy, IntPtrTy);
+            MetasetFastFunc = M->getFunction(functionName3);    
           
             /* DangSan init function */ 
             std::string functionName4 = "dang_init_heapobj";
-            DangSanInitFunc = M->getOrInsertFunction(functionName4, VoidTy, IntPtrTy, IntPtrTy,
-                                                              NULL);
+            M->getOrInsertFunction(functionName4, VoidTy, IntPtrTy, IntPtrTy);
+            DangSanInitFunc = M->getFunction(functionName4);     
             /* DangSan Free function */
             std::string functionName5 = "dang_freeptr";
-            DangSanFreeFunc = M->getOrInsertFunction(functionName5, VoidTy, IntPtrTy, IntPtrTy,
-                                                                            NULL);
+            M->getOrInsertFunction(functionName5, VoidTy, IntPtrTy, IntPtrTy);
+            DangSanFreeFunc = M->getFunction(functionName5);
         } else {
             //declare i64 @metaset_fixed(i64, i64, iM)
             std::string functionName = "metaset_fixed_" + std::to_string(MetadataBytes);
-            MetasetFunc = M->getOrInsertFunction(functionName, IntPtrTy,
-                IntPtrTy, IntPtrTy, IntMetaTy, NULL);
+            M->getOrInsertFunction(functionName, IntPtrTy,
+                IntPtrTy, IntPtrTy, IntMetaTy);
+            MetasetFunc = M->getFunction(functionName);
         }
 
         initialized = true;
@@ -356,5 +367,10 @@ char StackTracker::ID = 0;
 static RegisterPass<StackTracker> X("stacktracker", "Stack Tracker Pass", true, false);
 
 
-
+static void registerStackTracker(const PassManagerBuilder &,
+        legacy::PassManagerBase &PM) {
+    PM.add(new StackTracker());
+}
+static RegisterStandardPasses RegisterStackTracker(PassManagerBuilder::EP_OptimizerLast, registerStackTracker);
+static RegisterStandardPasses RegisterStackTracker0(PassManagerBuilder::EP_EnabledOnOptLevel0, registerStackTracker);
 

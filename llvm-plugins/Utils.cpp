@@ -18,8 +18,8 @@
 #include <llvm/IR/InstIterator.h>
 #include <llvm/Support/CommandLine.h>
 #include <llvm/Support/raw_ostream.h>
-#include <llvm/Target/TargetLowering.h>
-#include <llvm/Target/TargetSubtargetInfo.h>
+#include <llvm/CodeGen/TargetLowering.h>
+#include <llvm//CodeGen/TargetSubtargetInfo.h>
 #include <llvm/Transforms/Utils/Local.h>
 #include <llvm/Transforms/Utils/ModuleUtils.h>
 #include <llvm/Analysis/ScalarEvolution.h>
@@ -29,27 +29,30 @@
 #include <algorithm>
 
 #define DEBUG_TYPE "safetymanager"
+#ifdef DANG_DEBUG
+#define DEBUG(x) x
+#else
+#define DEBUG(x)
+#endif
 
 using namespace llvm;
 
 cl::opt<bool> FixedCompression ("METALLOC_FIXEDCOMPRESSION", cl::desc("Enable fixed compression for METADATA"), cl::init(false));
-cl::opt<unsigned long> MetadataBytes ("METALLOC_METADATABYTES", cl::desc("Number of METADATA bytes"), cl::init(8),
+cl::opt<unsigned long> MetadataBytes ("METALLOC_METADATABYTES", cl::desc("Number of METADATA bytes"), cl::init(8)/*,
     cl::values(
-        clEnumVal(1, ""),
-        clEnumVal(2, ""),
-        clEnumVal(4, ""),
-        clEnumVal(8, ""),
-        clEnumVal(16, ""),
-       clEnumValEnd));
+        clEnumVal(1, "1"),
+        clEnumVal(2, "2"),
+        clEnumVal(4, "4"),
+        clEnumVal(8, "8"),
+        clEnumVal(16, "16"))*/);
 cl::opt<bool> DeepMetadata ("METALLOC_DEEPMETADATA", cl::desc("Enable multi-level METADATA"), cl::init(true));
-cl::opt<unsigned long> DeepMetadataBytes ("METALLOC_DEEPMETADATABYTES", cl::desc("Number of bytes for second level METADATA"), cl::init(8),
+cl::opt<unsigned long> DeepMetadataBytes ("METALLOC_DEEPMETADATABYTES", cl::desc("Number of bytes for second level METADATA"), cl::init(8)/*,
     cl::values(
         clEnumVal(8, ""),
         clEnumVal(16, ""),
         clEnumVal(32, ""),
 	clEnumVal(72, ""),
-        clEnumVal(128, ""),
-        clEnumValEnd));
+        clEnumVal(128, ""))*/);
 
 /// Rewrite an SCEV expression for a memory access address to an expression that
 /// represents offset from the given alloca.

@@ -17,10 +17,14 @@
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/Support/CommandLine.h>
 #include <llvm/Support/raw_ostream.h>
-#include <llvm/Target/TargetLowering.h>
-#include <llvm/Target/TargetSubtargetInfo.h>
+#include <llvm/CodeGen/TargetLowering.h>
+#include <llvm/CodeGen/TargetSubtargetInfo.h>
 #include <llvm/Transforms/Utils/Local.h>
 #include <llvm/Transforms/Utils/ModuleUtils.h>
+
+
+#include <llvm/IR/LegacyPassManager.h>
+#include <llvm/Transforms/IPO/PassManagerBuilder.h>
 
 #include <string>
 #include <list>
@@ -70,10 +74,11 @@ struct GlobalTracker : public ModulePass {
         
         Instruction *globalInitReturn = getGlobalInitReturn();
         if (!globalInitReturn)
-            report_fatal_error("error; either initialize_global_metadata "
-                "has no return instruction or you forgot to link in "
-                "libmetadata.a");
-
+            return false;
+            // report_fatal_error("error; either initialize_global_metadata "
+            //     "has no return instruction or you forgot to link in "
+            //     "libmetadata.a");
+        report_fatal_error("found initialize_global_metadata ");
         IRBuilder<> B(globalInitReturn);
 
         for (auto& global: M->globals()) {
@@ -164,18 +169,22 @@ struct GlobalTracker : public ModulePass {
         if (!FixedCompression) {
             //declare i64 @metaset(i64, i64, iM, i64)
             std::string functionName = "metaset_alignment_safe_" + std::to_string(MetadataBytes);
-            MetasetFunc = M->getOrInsertFunction(functionName, IntPtrTy,
-                IntPtrTy, IntPtrTy, IntMetaTy, IntPtrTy, NULL);
+            M->getOrInsertFunction(functionName, IntPtrTy,
+                IntPtrTy, IntPtrTy, IntMetaTy, IntPtrTy);
+            MetasetFunc = M->getFunction(functionName);
         } else {
             //declare i64 @metaset_fixed(i64, i64, iM)
             std::string functionName = "metaset_fixed_" + std::to_string(MetadataBytes);
-            MetasetFunc = M->getOrInsertFunction(functionName, IntPtrTy,
-                IntPtrTy, IntPtrTy, IntMetaTy, NULL);
+            M->getOrInsertFunction(functionName, IntPtrTy,
+                IntPtrTy, IntPtrTy, IntMetaTy);
+            MetasetFunc = M->getFunction(functionName);
         }
         //declare void @initialize_global_metadata()
-        GlobalInitFunc = (Function*)M->getOrInsertFunction("initialize_global_metadata", VoidTy, NULL);
+        M->getOrInsertFunction("initialize_global_metadata", VoidTy);
+        GlobalInitFunc = M->getFunction("initialize_global_metadata");
 	std::string functionName = "dang_init_object";	
-	DangInitFunc = M->getOrInsertFunction(functionName, VoidTy, IntPtrTy, NULL);
+	M->getOrInsertFunction(functionName, VoidTy, IntPtrTy);
+    DangInitFunc = M->getFunction(functionName);
         initialized = true;
         
         return false;
@@ -185,6 +194,13 @@ struct GlobalTracker : public ModulePass {
 
 char GlobalTracker::ID = 0;
 static RegisterPass<GlobalTracker> X("globaltracker", "Global Tracker Pass", true, false);
+
+static void registerGlobalTracker(const PassManagerBuilder &,
+        legacy::PassManagerBase &PM) {
+    PM.add(new GlobalTracker());
+}
+//static RegisterStandardPasses RegisterGlobalTracker(PassManagerBuilder::EP_FullLinkTimeOptimizationLast, registerGlobalTracker);
+//static RegisterStandardPasses RegisterGlobalTracker0(PassManagerBuilder::EP_EnabledOnOptLevel0, registerGlobalTracker);
 
 
 

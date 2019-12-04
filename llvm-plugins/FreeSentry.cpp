@@ -59,6 +59,8 @@
 #include "llvm/ADT/Statistic.h"
 #include "FreeSentry.h"
 
+#include <llvm/IR/LegacyPassManager.h>
+#include <llvm/Transforms/IPO/PassManagerBuilder.h>
 
 #include <iostream>
 #include <fstream>
@@ -256,8 +258,9 @@ namespace {
         VoidTy = Type::getVoidTy(M->getContext());
         IntPtrTy = DL->getIntPtrType(M->getContext(), 0);
         
-        RegisterPtrFunc = M->getOrInsertFunction(UAFFUNC, VoidTy, IntPtrTy,
-                                                        IntPtrTy, NULL);
+        M->getOrInsertFunction(UAFFUNC, VoidTy, IntPtrTy,
+                                                        IntPtrTy);
+		RegisterPtrFunc = M->getFunction(UAFFUNC);
         initialized = true;
       return false;
     }
@@ -300,7 +303,7 @@ namespace {
       for (inst_iterator i = inst_begin (F), e = inst_end (F); i != e; ++i) {
 	Instruction *I = &*i;
         if (strstr(F.getName().str().c_str(), "Perl_ck_split") != NULL) {
-            I->dump();
+            DEBUG_MSG(I->dump());
         }
         if (isa < CallInst > (I)) {
 
@@ -340,11 +343,11 @@ namespace {
 
 	    Module *M = F.getParent ();
             const DataLayout *DL = &(M->getDataLayout());
-	    Constant *regptr_def = M->getOrInsertFunction (UAFFUNC,
+	    M->getOrInsertFunction (UAFFUNC,
 							   Type::getVoidTy (M->getContext ()),
 							    DL->getIntPtrType(M->getContext(), 0),
-                                                            DL->getIntPtrType(M->getContext(), 0),
-							   NULL);
+                                                            DL->getIntPtrType(M->getContext(), 0));
+		Constant *regptr_def = M->getFunction(UAFFUNC);
 	    Function *regptr = cast < Function > (regptr_def);
 	    regptr->setCallingConv (CallingConv::C);
 
@@ -679,11 +682,11 @@ namespace {
 			Function *F = BB->getParent ();
 			Module *M = F->getParent ();
                         const DataLayout *DL = &(M->getDataLayout());  
-                        Constant *regptr_def = M->getOrInsertFunction (UAFFUNC,
+                        M->getOrInsertFunction (UAFFUNC,
                                                 Type::getVoidTy (M->getContext ()),
                                                 DL->getIntPtrType(M->getContext(), 0),
-                                                DL->getIntPtrType(M->getContext(), 0),
-                                                NULL);
+                                                DL->getIntPtrType(M->getContext(), 0));
+						Constant *regptr_def = M->getFunction(UAFFUNC);
 
 			Function *regptr = dyn_cast < Function > (regptr_def);
 			regptr->setCallingConv (CallingConv::C);
@@ -729,10 +732,10 @@ namespace {
       AU.addRequired < DominatorTreeWrapperPass > ();
       //AU.addRequired < LoopInfo > ();
       AU.addRequired<LoopInfoWrapperPass>();
-      AU.addRequiredID (LoopSimplifyID);
-      AU.addPreservedID (LoopSimplifyID);
-      AU.addRequiredID (LCSSAID);
-      AU.addPreservedID (LCSSAID);
+      //AU.addRequiredID (LoopSimplifyID);
+      //AU.addPreservedID (LoopSimplifyID);
+      //AU.addRequiredID (LCSSAID);
+      //AU.addPreservedID (LCSSAID);
       AU.addRequired <AAResultsWrapperPass> ();
       AU.addPreserved <AAResultsWrapperPass> ();
       AU.addPreserved <ScalarEvolutionWrapperPass> ();
@@ -876,3 +879,12 @@ Pass *llvm::createFSGraph(bool flag) {
   return new FSGraph(flag);
 }
 */
+
+static void registerFreeSentry(const PassManagerBuilder &,
+        legacy::PassManagerBase &PM) {
+    PM.add(new FreeSentry());
+}
+static RegisterStandardPasses RegisterFreeSentry(PassManagerBuilder::EP_OptimizerLast, registerFreeSentry);
+static RegisterStandardPasses RegisterFreeSentry0(PassManagerBuilder::EP_EnabledOnOptLevel0, registerFreeSentry);
+
+

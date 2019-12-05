@@ -32,9 +32,7 @@ $(EXE2): $(OBJS)
 
 -include $(DEPS)
 
-$(OBJDIR)/%.o: %.cpp $(OBJDIR)
-	$(CC) $(INCLUDES) $(CFLAGS) -MMD -o $@ $<
-
-$(OBJDIR):
+$(OBJDIR)/%.o: %.cpp
 	mkdir -p $(OBJDIR)
-
+	$(CC) $(INCLUDES) $(CFLAGS) -MMD -o $@ $<
+	
